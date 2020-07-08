@@ -1,0 +1,10 @@
+
+### Including sub Plots
+
+You can also embed smaller plots, for example:
+
+```{r sub_pressure, echo=FALSE}
+plot(myData$speed)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

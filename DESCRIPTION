@@ -1,0 +1,15 @@
+Package: ProlineRdR
+Type: Package
+Title: Proline Reference datasets Reports
+Version: 0.0.1
+Date: 2020-06-24
+Authors@R: c(person(given = "Christophe", family = "Bruley",
+            email = "christophe.bruley@cea.fr",
+    role = c("aut","cre")), 
+            person(given = "Anne-Marie", family ="Hesse",
+            email = "Anne-Marie.Hesse@cea.fr",
+    role = "aut"),)
+Author: Christophe Bruley [cre,aut],
+        Anne-Marie Hesse [aut]
+Description: A set of markdown reports used to evaluate Proline performances on controlled proteomic reference datasets.
+License: CeCILL-2.1

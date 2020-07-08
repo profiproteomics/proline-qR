@@ -1,0 +1,322 @@
+
+## Ions analysis 
+
+\newline
+
+```{r echo=FALSE}
+filename = paste(params$input_directory, file ,sep = '/')
+
+sheet.names = openxlsx::getSheetNames(filename)
+
+proline.ions = openxlsx::read.xlsx(filename, sheet = params$ions_sheet_index, colNames = TRUE, startRow = 0)
+proline.ions = cleanup_ions_dataset(proline.ions, params$abundance_column_regexp)
+proline.ions = flag_by_accession(proline.ions, params$flags_accession_regexp)
+proline.ions = replace_zero_by_na(proline.ions, params$abundance_column_regexp)
+
+if (is.element("background", names(params$flags_accession_regexp))) {
+  background_accession_regexp = params$flags_accession_regexp[["background"]]
+} else {
+  background_accession_regexp = NULL
+}
+
+background.ions = ions_analysis(proline.ions, background_accession_regexp, params$abundance_column_regexp)
+
+```
+
+* Analysis parameters : 
+    + The analysed file name : **`r filename`**
+    + File date: **`r file.info(filename)$ctime`**
+    + Ions sheet used : **`r sheet.names[[params$ions_sheet_index]]`** 
+    + Proteins sheet used : **`r sheet.names[[params$proteins_sheet_index]]`** 
+    + Number of runs: **`r ncol(background.ions$abundances) `**
+    + Number of ions : **`r nrow(proline.ions)`**
+
+### Ions Summary
+
+Summary of identified and quantified (fully or partially) ions, grouped by matching accessions categories (see `flags_accession_regexp` parameter).
+
+```{r results='asis'}
+
+ions_summary = quantified_summary(proline.ions, params$abundance_column_regexp)
+knitr::kable(ions_summary$counts)
+knitr::kable(ions_summary$rates) 
+
+## add the file summary to the global one
+ions_summary = ions_summary$counts
+ions_summary$file = file
+ions.summary = rbind(ions.summary, ions_summary)
+
+```
+   
+### Ions Missing values 
+
+Number of ions matching a "background" (see `flags_accession_regexp` parameter, if "background" category is undefined, takes all ions into account) protein for which an abundance value was defined in more than *n* samples.
+
+```{r, fig.align='center', fig.width=8 }
+
+ggplot(background.ions$missing, aes(runs_count, y = value, color = variable)) + 
+  geom_point(aes(y = with_cross, col = 'with cross-assignment'), size = 3) +
+  geom_point(aes(y = without_cross, col = 'without cross-assignment'), size = 3) +
+  ylim(0, NA) + labs(title="Background ions quantifed in at least x runs ", x ="# runs", y = "# ions") +
+  theme(legend.position = "bottom")
+
+```
+
+### Ions CVs distribution 
+
+
+ions CVs distribution with/without cross-assigned values. 
+
+```{r results='asis'}
+
+cvs_summary = rbind( nocross = summary(na.omit(background.ions$CVs$without_cross)),
+                     cross = summary(na.omit(background.ions$CVs$with_cross)))
+knitr::kable(cvs_summary)
+
+```
+
+
+ions CVs density plot.
+
+```{r fig.width=8, fig.align='center'}
+#
+# Plot CV distribution
+#
+cvs = reshape2::melt(background.ions$CVs)
+median.cross = median(background.ions$CVs$with_cross, na.rm = TRUE)
+median.nocross = median(background.ions$CVs$without_cross, na.rm = TRUE)
+
+p = ggplot(data = cvs, aes(x = value, fill = variable)) + geom_density(aes(y=..count..), alpha = 0.2) + 
+  geom_vline(xintercept = median.cross, col = "darkorange3") + 
+  geom_vline(xintercept = median.nocross, col = "blue") +
+  scale_x_continuous(breaks = seq(0, 60, by = 2), limits = c(0,60)) + 
+  labs( x = "Coefficient of Variation (%)", y = "Density") 
+
+p.data <- ggplot_build(p)$data[[1]]
+p.groups <- lapply(split(p.data, f = p.data$group), function(df){
+  df[which.max(df$count), ]
+})
+
+p + 
+  annotate(geom= "label", label = sprintf("%1.1f", median.cross), x = median.cross,y = p.groups[[1]]$count/4 , size = 3, col = "darkorange3") + 
+  annotate(geom= "label", label = sprintf("%1.1f", median.nocross), x = median.nocross, y = p.groups[[1]]$count/4+100, size = 3, col = "blue") +
+  theme(legend.position = "bottom")
+
+```
+
+
+## Peptides analysis 
+
+
+\newline
+
+```{r echo=FALSE}
+
+apply_peptides_analysis = is.element("peptides_sheet_index", names(params)) 
+
+if(apply_peptides_analysis) {
+  proline.peptides = openxlsx::read.xlsx(
+    filename,
+    sheet = params$peptides_sheet_index,
+    colNames = TRUE,
+    startRow = 0
+  )
+  proline.peptides = cleanup_peptides_dataset(proline.peptides, params$abundance_column_regexp)
+  proline.peptides = flag_by_accession(proline.peptides, params$flags_accession_regexp)
+  proline.peptides = replace_zero_by_na(proline.peptides, params$abundance_column_regexp)
+
+  
+  if (is.element("background", names(params$flags_accession_regexp))) {
+    background_accession_regexp = params$flags_accession_regexp[["background"]]
+  } else {
+    background_accession_regexp = NULL
+  }
+  
+  background.peptides = ions_analysis(proline.peptides,
+                                      background_accession_regexp,
+                                      params$abundance_column_regexp)
+}
+
+```
+
+
+### Peptides Summary
+
+Summary of identified and quantified (fully or partially) peptides, grouped by matching accessions categories (see `flags_accession_regexp` parameter).
+
+```{r eval=apply_peptides_analysis}
+
+peptides_summary = quantified_summary(proline.peptides, params$abundance_column_regexp)
+
+## add the file summary to the global one
+peptides_count_summary = peptides_summary$counts
+peptides_count_summary$file = file
+peptides.summary = rbind(peptides.summary, peptides_count_summary)
+
+```
+
+
+```{r results='asis', eval=apply_peptides_analysis}
+
+knitr::kable(peptides_summary$counts)
+knitr::kable(peptides_summary$rates)
+
+```
+
+### peptides Missing values 
+
+Number of peptides matching a "background" (see `flags_accession_regexp` parameter, if "background" category is undefined, takes all peptides into account) protein for which an abundance value was defined in more than *n* samples.
+
+```{r, fig.align='center', fig.width=8, eval=apply_peptides_analysis}
+
+ggplot(background.peptides$missing,aes(runs_count, y = value, color = variable)) +
+  geom_point(aes(y = with_cross, col = 'with cross-assignment'), size = 3) +
+  geom_point(aes(y = without_cross, col = 'without cross-assignment'), size = 3) +
+  ylim(0, NA) + labs(title = "Background peptides quantifed in at least x runs ", x = "# runs", y = "# peptides") +
+  theme(legend.position = "bottom")
+
+```
+
+### peptides CVs distribution 
+
+
+peptides CVs distribution with/without cross-assigned values. 
+
+```{r results='asis', eval=apply_peptides_analysis}
+
+cvs_summary = rbind( nocross = summary(na.omit(background.peptides$CVs$without_cross)),
+                     cross = summary(na.omit(background.peptides$CVs$with_cross)))
+knitr::kable(cvs_summary)
+
+```
+
+
+peptides CVs density plot.
+
+```{r fig.width=8, fig.align='center', eval=apply_peptides_analysis}
+
+#
+# Plot CV distribution
+#
+cvs = reshape2::melt(background.peptides$CVs)
+median.cross = median(background.peptides$CVs$with_cross, na.rm = TRUE)
+median.nocross = median(background.peptides$CVs$without_cross, na.rm = TRUE)
+
+p = ggplot(data = cvs, aes(x = value, fill = variable)) + geom_density(aes(y=..count..), alpha = 0.2) +
+  geom_vline(xintercept = median.cross, col = "darkorange3") +
+  geom_vline(xintercept = median.nocross, col = "blue") +
+  scale_x_continuous(breaks = seq(0, 60, by = 2), limits = c(0, 60)) +
+  labs(x = "Coefficient of Variation (%)", y = "Density") 
+
+p.data <- ggplot_build(p)$data[[1]]
+p.groups <- lapply(split(p.data, f = p.data$group), function(df){
+  df[which.max(df$count), ]
+})
+
+p +
+  annotate(geom = "label", label = sprintf("%1.1f", median.cross), x = median.cross, y = p.groups[[1]]$count/4,size = 3,col = "darkorange3") +
+  annotate(geom = "label", label = sprintf("%1.1f", median.nocross),x = median.nocross,y = p.groups[[1]]$count/4 + 100,size = 3,col = "blue") +
+  theme(legend.position = "bottom")
+
+```
+
+
+
+## Proteins analysis
+
+The data are read from the proteins sheet of the analyzed Excel file. **Contaminant are filtered**  
+
+```{r }
+
+proline.proteins = openxlsx::read.xlsx(filename, sheet = params$proteins_sheet_index, colNames = TRUE, startRow = 0)
+proline.proteins = dplyr::select(proline.proteins, matches(paste0('accession|', params$abundance_column_regexp)))
+proline.proteins = proline.proteins %>% filter(!grepl("^#C#", accession))
+proline.proteins = flag_by_accession(proline.proteins, params$flags_accession_regexp)
+proline.proteins = replace_zero_by_na(proline.proteins, params$abundance_column_regexp)
+
+```
+
+### Proteins Summary
+
+```{r results='asis'}  
+
+proteins_summary = quantified_summary(proline.proteins, params$abundance_column_regexp)
+knitr::kable(proteins_summary$counts)
+knitr::kable(proteins_summary$rates)
+
+proteins_summary = proteins_summary$counts
+proteins_summary$file = file
+proteins.summary = rbind(proteins.summary, proteins_summary)
+
+```
+
+
+### Proteins CVs distribution
+
+```{r }
+
+background.proteins = abundance_values_analysis(proline.proteins, background_accession_regexp, params$abundance_column_regexp)
+
+median.cv = median(background.proteins$CVs, na.rm = TRUE)
+
+p = ggplot(data = data.frame(cv=background.proteins$CVs), aes(x = cv)) + geom_density(aes(y=..count..), alpha = 0.2, fill = "darkorange3") + 
+  geom_vline(xintercept = median.cv, col = "darkorange3") +
+  scale_x_continuous(breaks = seq(0, 150, by = 5), limits = c(0,150)) + 
+  labs( x = "Coefficient of Variation (%)", y = "Density") 
+
+p.data <- ggplot_build(p)$data[[1]]
+p.groups <- lapply(split(p.data, f = p.data$group), function(df){
+  df[which.max(df$count), ]
+})
+
+p +
+  annotate(geom= "label", label = sprintf("%1.1f", median.cv), x = median.cv, y = p.groups[[1]]$count/4, size = 3, col = "darkorange3") +
+  theme(legend.position = "bottom")
+
+```
+
+
+```{r }
+condition = gsub(".*_(.*)\\.xlsx", "\\1", file)
+if (condition == file) {
+  condition = gsub("(.*)\\.xlsx", "\\1", file)
+}
+apply_diff_analysis = grepl('-', condition) && is.element("dapar_test_method", names(params)) 
+
+```
+
+```{r results='asis', eval=apply_diff_analysis} 
+
+  cat('### Proteins differential analysis')
+
+```
+
+  
+```{r fig.width=8, eval=apply_diff_analysis}
+
+r = dapar_differential_protein_analysis(proline.proteins, 
+                                      condition, 
+                                      params$abundance_column_regexp, 
+                                      params$dapar_normalize, 
+                                      params$dapar_imputation, 
+                                      params$dapar_quantile_qval, 
+                                      params$dapar_test_method)
+
+all.proteins = rbind(all.proteins, r)
+
+ggplot(r, aes(x = logFC, y = -log10(pvalue))) +
+  geom_point(aes(color = factor(flag)), size = 3.5, shape = 16, alpha = .6) +
+  scale_x_continuous(breaks = seq(-9, 9, by = 1), limits = c(-9,9)) +
+  theme(legend.position = "bottom")
+
+
+```
+
+Intensities distribution 
+
+```{r eval=apply_diff_analysis}
+
+ma.proteins = all.proteins %>% mutate(C1_mean = rowMeans(select(., starts_with("C1")), na.rm = TRUE))
+ggplot(ma.proteins) + geom_point(aes(x = log10(C1_mean), y = logFC, color = flag), shape = 16, alpha = .6)
+
+```

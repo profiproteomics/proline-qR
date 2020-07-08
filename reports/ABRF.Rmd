@@ -1,0 +1,190 @@
+---
+title: "`r params$title`"
+author: "Christophe Bruley"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    highlight: kate
+    code_folding: "hide"
+  word_document: 
+    fig_height: 5
+  html_document:
+    number_sections: yes
+    toc: yes
+    code_folding: "hide"
+params:
+  title: "(ABRF)"
+  input_directory: 'data/ABRF/20200123_peakel/spec_sumion_sum'
+  ions_sheet_index: 5
+  proteins_sheet_index: 4
+  peptide_sheet_index: 7
+  flags_accession_regexp: !r list(background = '_YEAS|_yeas|_SCV?|_SACPS')
+  abundance_column_regexp: '^abundance'
+  dapar_normalize: TRUE
+  dapar_imputation: 'quantile'
+  dapar_quantile_qval: 0.025
+  dapar_test_method: 'Limma'
+
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(matrixcalc)
+library(openxlsx)
+library(rmdformats)
+
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+
+```
+
+```{r read_data}
+
+source('R/commons_functions.R')
+source('R/file-utils.R')
+
+file = list.files(path = params$input_directory, pattern = ".*\\.xlsx")[1]
+all.proteins = NULL
+ions.summary = NULL
+proteins.summary = NULL
+peptides.summary = NULL
+
+```
+
+
+# Parameters 
+
+Parameters used to generate this report : 
+`r knitr::kable(knit_params_as_dataframe(params))`
+
+Detected data files to process: `r paste0(file)`
+
+# Comparison `r file`
+
+
+```{r child="dataset_summary.Rmd" }
+```
+
+
+# Differential Analysis
+
+The differential analysis reads the proteins data again to overcome the error due to a spiked protein identified among contaminants. **Warning** This means that the error is not taken into account in the previous sections of this document.
+
+```{r differential_analysis}
+
+filename = paste(params$input_directory, file ,sep = '/')
+proline.proteins = openxlsx::read.xlsx(filename, sheet = params$proteins_sheet_index, colNames = TRUE, startRow = 0)
+proline.proteins = dplyr::select(proline.proteins, matches(paste0('accession|', params$abundance_column_regexp)))
+
+proline.proteins[which(proline.proteins$accession == "#C#P02769"), ]$accession = "P02769"
+proline.proteins = proline.proteins %>% filter(!grepl("^#C#", accession))
+proline.proteins = flag_by_accession(proline.proteins, params$background_accession_regexp)
+
+conditions = c("1", "2", "3", "4")
+columns = group_columns_by_conditions(proline.proteins, conditions , params$abundance_column_regexp)
+column.other.indexes = which(!(colnames(proline.proteins) %in% list.flatten(columns)))
+
+
+pairwise.conditions = combn(c("1", "2", "3", "4"), 2)
+differential.proteins = NULL
+all.proteins = NULL
+
+for (i in 1:ncol(pairwise.conditions)) {
+
+  condition = paste0(pairwise.conditions[,i],collapse='-')
+  columns.indexes = which(colnames(proline.proteins) %in% list.flatten(columns[pairwise.conditions[,i]]))
+  
+  subset.proline.proteins = proline.proteins[,c(column.other.indexes, columns.indexes)]
+  subset.proline.proteins = dapar_differential_protein_analysis(subset.proline.proteins, 
+                                                                condition, 
+                                                                params$abundance_column_regexp,
+                                                                params$dapar_normalize, 
+                                                                params$dapar_imputation, 
+                                                                params$dapar_quantile_qval, 
+                                                                params$dapar_test_method)
+
+  ggplot(subset.proline.proteins, aes(x = logFC, y = -log10(pvalue))) +
+  geom_point(aes(color = factor(flag)), size = 2.0, shape = 16, alpha = .6) +
+  theme(legend.position = "bottom")
+
+  all.proteins =rbind(all.proteins, subset.proline.proteins)
+  
+  subset.proline.proteins = dplyr::filter(subset.proline.proteins, !is.na(logFC))
+  
+  # subset.proline.proteins$adjusted_pvalue = cp4p::adjust.p(subset.proline.proteins$pvalue)$adjp$adjusted.p
+  # subset.proline.proteins = dplyr::arrange(subset.proline.proteins, pvalue)
+  # index = max(which(subset.proline.proteins$adjusted_pvalue < 0.01))
+  # differential.proteins = rbind(differential.proteins, dplyr::slice(subset.proline.proteins, 1:index))
+
+  differential.proteins = rbind(differential.proteins, subset.proline.proteins)
+  
+}
+
+```
+
+
+## Intensities distribution
+
+```{r }
+differential.ref = c("P02769","UTR6_YEAST","SFG2_YEAST","ZRT4_YEAST","ISCB_YEAST","VAC2_YEAST")
+all.proteins[is.element(all.proteins$accession, differential.ref), "flag"] = "spkiked"
+all.proteins = all.proteins %>% mutate(C1_mean = rowMeans(select(., starts_with("C1")), na.rm = TRUE))
+
+ggplot(all.proteins) + geom_point(aes(x = log10(C1_mean), y = logFC, color = flag), shape = 16, alpha = .6)
+
+``` 
+
+## Declared as differential (1% FDR)
+
+```{r results='asis'}
+
+  differential.proteins$adjusted_pvalue = cp4p::adjust.p(differential.proteins$pvalue)$adjp$adjusted.p
+  differential.proteins = dplyr::arrange(differential.proteins, pvalue)
+  index = max(which(differential.proteins$adjusted_pvalue < 0.01))
+
+  differential.proteins = dplyr::slice(differential.proteins, 1:index)
+
+  knitr::kable(flags_summary(differential.proteins))
+  knitr::kable(dplyr::select(differential.proteins, -c(2,3,4)))
+
+  differential.ref = c("P02769","UTR6_YEAST","SFG2_YEAST","ZRT4_YEAST","ISCB_YEAST","VAC2_YEAST")
+  differential.true = dplyr::filter(differential.proteins, accession %in% differential.ref)
+
+  cat('True spiked proteins declared as differential')
+
+  knitr::kable(flags_summary(differential.true))
+
+
+```
+
+## Observed vs Expected ratios
+
+
+```{r }
+expectedFC = data.frame(accession = differential.ref, 
+                        "1-2" = c(-4.196397213 ,5.022367813 ,-2.906890596 ,5.64385619 ,-1.874469118 ,-0.2410081),
+                        "1-3" = c(-0.137503524 ,4.781359714 ,2.115477217 ,0.137503524 ,-4.781359714 ,-2.115477217),
+                        "1-4" = c(5.506352666 ,2.906890596 ,1.874469118 ,-4.058893689 ,0.2410081 ,-5.022367813),
+                        "2-3" = c(4.058893689 ,-0.2410081 ,5.022367813 ,-5.506352666 ,-2.906890596 ,-1.874469118),
+                        "2-4" = c(9.702749879 ,-2.115477217 ,4.781359714 ,-9.702749879 ,2.115477217 ,-4.781359714),
+                        "3-4" = c(5.64385619 ,-1.874469118 ,-0.2410081 ,-4.196397213 ,5.022367813 ,-2.906890596))
+expectedFC = melt(expectedFC, id = "accession")
+expectedFC$variable = gsub('X', '', expectedFC$variable)
+expectedFC$variable = gsub('\\.', '-', expectedFC$variable)
+colnames(expectedFC) = c("accession", "dataset", "expectedFC")
+
+spiked.proteins = all.proteins[is.element(all.proteins$accession, differential.ref),]
+spiked.proteins = left_join(spiked.proteins, expectedFC, by = c("accession", "dataset"))
+spiked.differential = data.frame(accession = differential.true$accession, dataset = differential.true$dataset, differential = TRUE)
+
+spiked.proteins = left_join(spiked.proteins, spiked.differential, by = c("accession", "dataset"))
+spiked.proteins[which(is.na(spiked.proteins$differential)), "differential"] = FALSE
+
+ggplot(spiked.proteins) + geom_point(aes(x = abs(expectedFC), y = abs(logFC), color = differential)) + 
+  geom_abline(intercept =0 , slope = 1, linetype = "12") 
+
+```

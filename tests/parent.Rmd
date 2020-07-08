@@ -1,0 +1,71 @@
+---
+title: "TestParent"
+author: "Christophe Bruley"
+date: "10/01/2020"
+output:
+  rmdformats::readthedown:
+    highlight: kate
+    code_folding: "hide"
+  html_document:
+params:
+  input_directory: '20190307_MRF'
+  proteins_output_file: 'Proteins.xlsx'
+  ions.sheet.index: 6
+  proteins.sheet.index: 4
+  spike.accession.regexp: 'HUMAN_UPS'
+  test: !r list(ups = "HUMAN_UPS")
+
+---
+
+```{r setup, include=FALSE}
+
+library(kableExtra)
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+myData = cars
+summary(myData)
+x = 15
+
+```
+
+```{r result='asis'}
+t = params$test
+t[["ups"]]
+```
+
+
+# Child Section
+
+You can also embed child doc, for example:
+
+```{r child="child.Rmd"}
+```
+
+
+but at the end x is `r x`
+
+# Another section 
+
+```{r }
+x = 32
+```
+
+
+The value of x is now `r x`
+
+# Table formatting 
+
+```{r }
+data = iris
+knitr::kable(data, format = "html") %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+
+```
